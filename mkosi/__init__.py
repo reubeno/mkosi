@@ -1635,6 +1635,8 @@ def mount_cache(state: MkosiState) -> Iterator[None]:
         cache_paths = ["var/cache/binpkgs"]
     elif state.config.distribution == Distribution.opensuse:
         cache_paths = ["var/cache/zypp/packages"]
+    elif state.config.distribution == Distribution.photon:
+        cache_paths = ["var/cache/tdnf"]
     else:
         cache_paths = []
 
@@ -1893,6 +1895,16 @@ def clean_rpm_metadata(root: Path, always: bool) -> None:
     clean_paths(root, paths, tool='/bin/rpm', always=always)
 
 
+def clean_tdnf_metadata(root: Path, always: bool) -> None:
+    """Remove tdnf metadata if /usr/bin/tdnf is not present in the image"""
+    paths = [
+        "/var/log/tdnf.*",
+        "/var/cache/tdnf",
+    ]
+
+    clean_paths(root, paths, tool='/usr/bin/tdnf', always=always)
+
+
 def clean_apt_metadata(root: Path, always: bool) -> None:
     """Remove apt metadata if /usr/bin/apt is not present in the image"""
     paths = [
@@ -1931,6 +1943,7 @@ def clean_package_manager_metadata(state: MkosiState) -> None:
     clean_dnf_metadata(state.root, always=always)
     clean_yum_metadata(state.root, always=always)
     clean_rpm_metadata(state.root, always=always)
+    clean_tdnf_metadata(state.root, always=always)
     clean_apt_metadata(state.root, always=always)
     clean_dpkg_metadata(state.root, always=always)
     # FIXME: implement cleanup for other package managers: swupd, pacman
@@ -2027,6 +2040,50 @@ def install_packages_dnf(state: MkosiState, packages: Set[str],) -> None:
     invoke_dnf(state, 'install', packages)
 
 
+def invoke_tdnf(
+    args: MkosiArgs,
+    root: Path,
+    command: str,
+    packages: Set[str],
+    gpgcheck: bool,
+    do_run_build_script: bool,
+) -> None:
+
+    config_file = workspace(root) / "dnf.conf"
+    packages = make_rpm_list(args, packages, do_run_build_script)
+
+    cmdline = [
+        "tdnf",
+        "-y",
+        f"--config={config_file}",
+        f"--releasever={args.release}",
+        f"--installroot={root}",
+    ]
+
+    if args.repositories:
+        cmdline += ["--disablerepo=*"] + [f"--enablerepo={repo}" for repo in args.repositories]
+
+    if not gpgcheck:
+        cmdline += ["--nogpgcheck"]
+
+    cmdline += [command, *sort_packages(packages)]
+
+    with mount_api_vfs(args, root):
+        run(cmdline)
+
+
+def install_packages_tdnf(
+    args: MkosiArgs,
+    root: Path,
+    packages: Set[str],
+    gpgcheck: bool,
+    do_run_build_script: bool,
+) -> None:
+
+    packages = make_rpm_list(args, packages, do_run_build_script)
+    invoke_tdnf(args, root, 'install', packages, gpgcheck, do_run_build_script)
+
+
 class Repo(NamedTuple):
     id: str
     url: str
@@ -2065,7 +2122,8 @@ def setup_dnf(state: MkosiState, repos: Sequence[Repo] = ()) -> None:
     if state.config.use_host_repositories:
         default_repos  = ""
     else:
-        default_repos  = f"reposdir={state.workspace} {state.config.repos_dir if state.config.repos_dir else ''}"
+        option = "repodir" if args.distribution == Distribution.photon else "reposdir"
+        default_repos  = f"{option}={state.workspace} {state.config.repos_dir if state.config.repos_dir else ''}"
 
     vars_dir = state.workspace / "vars"
     vars_dir.mkdir(exist_ok=True)
@@ -2081,6 +2139,25 @@ def setup_dnf(state: MkosiState, repos: Sequence[Repo] = ()) -> None:
             """
         )
     )
+
+
+@complete_step("Installing Photon…")
+def install_photon(args: MkosiArgs, root: Path, do_run_build_script: bool) -> None:
+    release_url = "baseurl=https://packages.vmware.com/photon/$releasever/photon_release_$releasever_$basearch"
+    updates_url = "baseurl=https://packages.vmware.com/photon/$releasever/photon_updates_$releasever_$basearch"
+    gpgpath = Path("/etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY")
+
+    repos = [Repo("photon", f"VMware Photon OS {args.release} Release", release_url, gpgpath),
+             Repo("photon-updates", f"VMware Photon OS {args.release} Updates", updates_url, gpgpath)]
+
+    setup_dnf(args, root, repos)
+
+    packages = {*args.packages}
+    add_packages(args, packages, "minimal")
+    if not do_run_build_script and args.bootable:
+        add_packages(args, packages, "linux", "initramfs")
+
+    install_packages_tdnf(args, root, packages, gpgpath.exists(), do_run_build_script)
 
 
 def parse_fedora_release(release: str) -> Tuple[str, str]:
@@ -2971,6 +3048,7 @@ def install_distribution(state: MkosiState, cached: bool) -> None:
             Distribution.ubuntu: install_ubuntu,
             Distribution.arch: install_arch,
             Distribution.opensuse: install_opensuse,
+            Distribution.photon: install_photon,
             Distribution.openmandriva: install_openmandriva,
             Distribution.gentoo: install_gentoo,
         }[state.config.distribution]
@@ -2992,7 +3070,8 @@ def remove_packages(state: MkosiState) -> None:
 
     remove: Callable[[List[str]], Any]
 
-    if (state.config.distribution.package_type == PackageType.rpm):
+    if (state.config.distribution.package_type == PackageType.rpm and
+        state.config.distribution != Distribution.photon):
         remove = lambda p: invoke_dnf(state, 'remove', p)
     elif state.config.distribution.package_type == PackageType.deb:
         remove = lambda p: invoke_apt(state, "get", "purge", ["--assume-yes", "--auto-remove", *p])
@@ -6462,6 +6541,8 @@ def load_args(args: argparse.Namespace) -> MkosiConfig:
             args.release = "jammy"
         elif args.distribution == Distribution.opensuse:
             args.release = "tumbleweed"
+        elif args.distribution == Distribution.photon:
+            args.release = "3.0"
         elif args.distribution == Distribution.openmandriva:
             args.release = "cooker"
         elif args.distribution == Distribution.gentoo:

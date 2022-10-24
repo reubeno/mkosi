@@ -150,6 +150,7 @@ class Distribution(enum.Enum):
     mageia = 5, PackageType.rpm
     centos = 6, PackageType.rpm
     centos_epel = 7, PackageType.rpm
+    photon = 9, PackageType.rpm
     openmandriva = 10, PackageType.rpm
     rocky = 11, PackageType.rpm
     rocky_epel = 12, PackageType.rpm
@@ -175,6 +176,7 @@ def is_rpm_distribution(d: Distribution) -> bool:
         Distribution.mageia,
         Distribution.centos,
         Distribution.centos_epel,
+        Distribution.photon,
         Distribution.openmandriva,
         Distribution.rocky,
         Distribution.rocky_epel,
