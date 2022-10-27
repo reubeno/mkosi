@@ -1,0 +1,25 @@
+[Distribution]
+Distribution=mariner
+
+[Host]
+QemuHeadless=yes
+Netdev=yes
+
+[Output]
+Format=gpt_ext4
+Bootable=yes
+ReadOnly=yes
+Verity=yes
+QCow2=yes
+Hostname=mariner
+ManifestFormat=json
+OutputDirectory=out/
+KernelCommandLine=!* console=ttyS0 systemd.volatile=overlay # debug systemd.log_level=debug systemd.journald.forward_to_console=on
+
+[Content]
+WithDocs=no
+WithTests=no
+Packages=systemd-252.0-1.cm2.x86_64.rpm,systemd-rpm-macros-252.0-1.cm2.noarch.rpm,ca-certificates,cronie-anacron,logrotate,core-packages-base-image
+Password=root
+PasswordIsHashed=no
+Autologin=yes
