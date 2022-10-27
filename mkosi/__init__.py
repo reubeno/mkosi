@@ -1450,7 +1450,11 @@ def mount(
         run(cmd)
         yield where
     finally:
-        run(["umount", "--no-mtab", "--recursive", where])
+        umount_result = run(["umount", "--no-mtab", "--recursive", where], check=False)
+        if umount_result.returncode != 0:
+            print("WARNING: failed to unmount; waiting and retrying with --force...")
+            time.sleep(1)
+            umount_result = run(["umount", "--no-mtab", "--recursive", "--force", where], check=True)
 
 
 def mount_loop(config: MkosiConfig, dev: Path, where: Path, read_only: bool = False) -> ContextManager[Path]:
@@ -1621,7 +1625,7 @@ def mount_api_vfs(root: Path) -> Iterator[None]:
 
 @contextlib.contextmanager
 def mount_cache(state: MkosiState) -> Iterator[None]:
-    if state.config.distribution in (Distribution.fedora, Distribution.mageia, Distribution.openmandriva):
+    if state.config.distribution in (Distribution.fedora, Distribution.mageia, Distribution.openmandriva, Distribution.mariner):
         cache_paths = ["var/cache/dnf"]
     elif is_centos_variant(state.config.distribution):
         # We mount both the YUM and the DNF cache in this case, as YUM might
@@ -1635,8 +1639,6 @@ def mount_cache(state: MkosiState) -> Iterator[None]:
         cache_paths = ["var/cache/binpkgs"]
     elif state.config.distribution == Distribution.opensuse:
         cache_paths = ["var/cache/zypp/packages"]
-    elif state.config.distribution == Distribution.photon:
-        cache_paths = ["var/cache/tdnf"]
     else:
         cache_paths = []
 
@@ -1680,6 +1682,25 @@ def configure_dracut(state: MkosiState, cached: bool) -> None:
             '[[ $(modinfo -k "$kernel" -F filename efivarfs 2>/dev/null) == /* ]] && add_drivers+=" efivarfs "\n'
         )
 
+    if state.config.read_only:
+        dracut_dir.joinpath("30-mkosi-ro.conf").write_text(
+            '[[ $(modinfo -k "$kernel" -F filename overlay 2>/dev/null) == /* ]] && add_drivers+=" overlay "\n'
+        )
+
+    # Modules may be required for device mapper targets
+    dm_modules = []
+    if state.config.encrypt:
+        dm_modules.append("dm-crypt")
+    if state.config.verity:
+        dm_modules.append("dm-verity")
+    if dm_modules:
+        dm_modules.append("dm_mod")
+
+        conf_content = 'add_dracutmodules+=" dm "\n'
+        for dm_module in dm_modules:
+            conf_content += f'[[ $(modinfo -k "$kernel" -F filename {dm_module} 2>/dev/null) == /* ]] && add_drivers+=" {dm_module} "\n'
+
+        dracut_dir.joinpath("30-mkosi-dm.conf").write_text(conf_content)
 
 def prepare_tree_root(state: MkosiState) -> None:
     if state.config.output_format == OutputFormat.subvolume and not is_generated_root(state.config):
@@ -2003,6 +2024,11 @@ def invoke_dnf(state: MkosiState, command: str, packages: Iterable[str]) -> None
     with mount_api_vfs(state.root):
         run(cmdline, env=dict(KERNEL_INSTALL_BYPASS="1"))
 
+        if state.config.distribution == Distribution.mariner:
+            # TODO: find a cleaner way to do this
+            subprocess.run(["pkill", "-f", "gpg-agent"], check=False)
+
+
     distribution, _ = detect_distribution()
     if distribution not in (Distribution.debian, Distribution.ubuntu):
         return
@@ -2038,50 +2064,6 @@ def link_rpm_db(root: Path) -> None:
 def install_packages_dnf(state: MkosiState, packages: Set[str],) -> None:
     packages = make_rpm_list(state, packages)
     invoke_dnf(state, 'install', packages)
-
-
-def invoke_tdnf(
-    args: MkosiArgs,
-    root: Path,
-    command: str,
-    packages: Set[str],
-    gpgcheck: bool,
-    do_run_build_script: bool,
-) -> None:
-
-    config_file = workspace(root) / "dnf.conf"
-    packages = make_rpm_list(args, packages, do_run_build_script)
-
-    cmdline = [
-        "tdnf",
-        "-y",
-        f"--config={config_file}",
-        f"--releasever={args.release}",
-        f"--installroot={root}",
-    ]
-
-    if args.repositories:
-        cmdline += ["--disablerepo=*"] + [f"--enablerepo={repo}" for repo in args.repositories]
-
-    if not gpgcheck:
-        cmdline += ["--nogpgcheck"]
-
-    cmdline += [command, *sort_packages(packages)]
-
-    with mount_api_vfs(args, root):
-        run(cmdline)
-
-
-def install_packages_tdnf(
-    args: MkosiArgs,
-    root: Path,
-    packages: Set[str],
-    gpgcheck: bool,
-    do_run_build_script: bool,
-) -> None:
-
-    packages = make_rpm_list(args, packages, do_run_build_script)
-    invoke_tdnf(args, root, 'install', packages, gpgcheck, do_run_build_script)
 
 
 class Repo(NamedTuple):
@@ -2122,8 +2104,7 @@ def setup_dnf(state: MkosiState, repos: Sequence[Repo] = ()) -> None:
     if state.config.use_host_repositories:
         default_repos  = ""
     else:
-        option = "repodir" if args.distribution == Distribution.photon else "reposdir"
-        default_repos  = f"{option}={state.workspace} {state.config.repos_dir if state.config.repos_dir else ''}"
+        default_repos  = f"reposdir={state.workspace} {state.config.repos_dir if state.config.repos_dir else ''}"
 
     vars_dir = state.workspace / "vars"
     vars_dir.mkdir(exist_ok=True)
@@ -2141,23 +2122,50 @@ def setup_dnf(state: MkosiState, repos: Sequence[Repo] = ()) -> None:
     )
 
 
-@complete_step("Installing Photon…")
-def install_photon(args: MkosiArgs, root: Path, do_run_build_script: bool) -> None:
-    release_url = "baseurl=https://packages.vmware.com/photon/$releasever/photon_release_$releasever_$basearch"
-    updates_url = "baseurl=https://packages.vmware.com/photon/$releasever/photon_updates_$releasever_$basearch"
-    gpgpath = Path("/etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY")
+@complete_step("Installing Mariner…")
+def install_mariner(state: MkosiState) -> None:
+    base_url = "baseurl=https://packages.microsoft.com/cbl-mariner/$releasever/prod/base/$basearch"
+    microsoft_url = "baseurl=https://packages.microsoft.com/cbl-mariner/$releasever/prod/Microsoft/$basearch"
+    extras_url = "baseurl=https://packages.microsoft.com/cbl-mariner/$releasever/prod/extras/$basearch"
+    gpgpath = Path("/etc/pki/rpm-gpg/MICROSOFT-RPM-GPG-KEY")
 
-    repos = [Repo("photon", f"VMware Photon OS {args.release} Release", release_url, gpgpath),
-             Repo("photon-updates", f"VMware Photon OS {args.release} Updates", updates_url, gpgpath)]
+    repos = [Repo("mariner-official-base", base_url, gpgpath),
+             Repo("mariner-official-microsoft", microsoft_url, gpgpath),
+             Repo("mariner-official-extras", extras_url, gpgpath)]
 
-    setup_dnf(args, root, repos)
+    setup_dnf(state, repos)
 
-    packages = {*args.packages}
-    add_packages(args, packages, "minimal")
-    if not do_run_build_script and args.bootable:
-        add_packages(args, packages, "linux", "initramfs")
+    MkosiPrinter.info("Setting up RPM database...")
+    subprocess.run(["rpm", "--root", state.root, "--initdb"])
 
-    install_packages_tdnf(args, root, packages, gpgpath.exists(), do_run_build_script)
+    packages = {*state.config.packages}
+
+    # TODO: Shrink this list.
+    add_packages(state.config, packages,
+                 "mariner-release",  # Basic distro release files
+                 "filesystem",       # Basic directory layout
+                 "shim",             # UEFI bootloader that chains to a trusted full bootloader
+                 "grub2-efi-binary", # GRUB UEFI Image
+                 "ca-certificates",  # CA root certificates
+                 "cronie-anacron",   # Standard cron daemon
+                 "logrotate",        # System log rotator
+                 "core-packages-base-image") # Metapackage with basic packages
+
+    if not state.do_run_build_script and state.config.bootable:
+        add_packages(state.config, packages, "kernel", "initramfs")
+        if state.config.encrypt or state.config.verity:
+            add_packages(state.config, packages, "lvm2")
+
+    if state.do_run_build_script:
+        packages.update(state.config.build_packages)
+
+    install_packages_dnf(state, packages)
+
+    kernel_d_dir = state.root / "etc/kernel/install.d"
+    os.makedirs(kernel_d_dir, exist_ok=True)
+
+    write_resource(kernel_d_dir / "50-mkosi-reconfigure-dracut.install",
+                   "mkosi.resources", "mariner-reconfigure-dracut.install", executable=True)
 
 
 def parse_fedora_release(release: str) -> Tuple[str, str]:
@@ -3048,7 +3056,7 @@ def install_distribution(state: MkosiState, cached: bool) -> None:
             Distribution.ubuntu: install_ubuntu,
             Distribution.arch: install_arch,
             Distribution.opensuse: install_opensuse,
-            Distribution.photon: install_photon,
+            Distribution.mariner: install_mariner,
             Distribution.openmandriva: install_openmandriva,
             Distribution.gentoo: install_gentoo,
         }[state.config.distribution]
@@ -3071,7 +3079,7 @@ def remove_packages(state: MkosiState) -> None:
     remove: Callable[[List[str]], Any]
 
     if (state.config.distribution.package_type == PackageType.rpm and
-        state.config.distribution != Distribution.photon):
+        state.config.distribution != Distribution.mariner):
         remove = lambda p: invoke_dnf(state, 'remove', p)
     elif state.config.distribution.package_type == PackageType.deb:
         remove = lambda p: invoke_apt(state, "get", "purge", ["--assume-yes", "--auto-remove", *p])
@@ -4003,7 +4011,7 @@ def gen_kernel_images(state: MkosiState) -> Iterator[Tuple[str, Path]]:
             _, kimg_path = ARCHITECTURES[state.config.architecture]
 
             kimg = Path(f"usr/src/linux-{kver.name}") / kimg_path
-        elif state.config.distribution in (Distribution.debian, Distribution.ubuntu):
+        elif state.config.distribution in (Distribution.debian, Distribution.ubuntu, Distribution.mariner):
             kimg = Path(f"boot/vmlinuz-{kver.name}")
         else:
             kimg = Path("lib/modules") / kver.name / "vmlinuz"
@@ -4014,8 +4022,12 @@ def gen_kernel_images(state: MkosiState) -> Iterator[Tuple[str, Path]]:
 def initrd_path(state: MkosiState, kver: str) -> Path:
     # initrd file is versioned in Debian Bookworm
     initrd = state.root / boot_directory(state, kver) / f"initrd.img-{kver}"
+
     if not initrd.exists():
         initrd = state.root / boot_directory(state, kver) / "initrd"
+
+    if not initrd.exists():
+        initrd = state.root / "boot" / f"initrd.img-{kver}"
 
     return initrd
 
@@ -6541,8 +6553,8 @@ def load_args(args: argparse.Namespace) -> MkosiConfig:
             args.release = "jammy"
         elif args.distribution == Distribution.opensuse:
             args.release = "tumbleweed"
-        elif args.distribution == Distribution.photon:
-            args.release = "3.0"
+        elif args.distribution == Distribution.mariner:
+            args.release = "2.0"
         elif args.distribution == Distribution.openmandriva:
             args.release = "cooker"
         elif args.distribution == Distribution.gentoo:

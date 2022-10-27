@@ -150,13 +150,13 @@ class Distribution(enum.Enum):
     mageia = 5, PackageType.rpm
     centos = 6, PackageType.rpm
     centos_epel = 7, PackageType.rpm
-    photon = 9, PackageType.rpm
     openmandriva = 10, PackageType.rpm
     rocky = 11, PackageType.rpm
     rocky_epel = 12, PackageType.rpm
     alma = 13, PackageType.rpm
     alma_epel = 14, PackageType.rpm
     gentoo = 15, PackageType.ebuild
+    mariner = 16, PackageType.rpm
 
     def __new__(cls, number: int, package_type: PackageType) -> Distribution:
         # This turns the list above into enum entries with .package_type attributes.
@@ -176,7 +176,7 @@ def is_rpm_distribution(d: Distribution) -> bool:
         Distribution.mageia,
         Distribution.centos,
         Distribution.centos_epel,
-        Distribution.photon,
+        Distribution.mariner,
         Distribution.openmandriva,
         Distribution.rocky,
         Distribution.rocky_epel,
