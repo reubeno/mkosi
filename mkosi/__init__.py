@@ -2140,19 +2140,17 @@ def install_mariner(state: MkosiState) -> None:
 
     packages = {*state.config.packages}
 
-    # TODO: Shrink this list.
-    add_packages(state.config, packages,
-                 "mariner-release",  # Basic distro release files
-                 "filesystem",       # Basic directory layout
-                 "shim",             # UEFI bootloader that chains to a trusted full bootloader
-                 "grub2-efi-binary", # GRUB UEFI Image
-                 "ca-certificates",  # CA root certificates
-                 "cronie-anacron",   # Standard cron daemon
-                 "logrotate",        # System log rotator
-                 "core-packages-base-image") # Metapackage with basic packages
+    add_packages(state.config,
+                 packages,
+                 "mariner-release", # Brings os-release et al.
+                 "filesystem",      # Brings base filesystem structures
+                 "shadow-utils",    # Brings /etc/shadow
+                 "dbus")            # Required for systemd
 
     if not state.do_run_build_script and state.config.bootable:
         add_packages(state.config, packages, "kernel", "initramfs")
+
+        # If using device mapper, we need dracut to be able to find udev dm rules and dm tools
         if state.config.encrypt or state.config.verity:
             add_packages(state.config, packages, "lvm2")
 
@@ -6673,8 +6671,6 @@ def load_args(args: argparse.Namespace) -> MkosiConfig:
         if args.root_size is None:
             # Size will be automatic
             args.minimize = True
-        if args.compress is False:
-            die("Cannot disable compression with squashfs", MkosiNotSupportedException)
         if args.compress is None:
             args.compress = True
 
