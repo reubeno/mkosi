@@ -977,8 +977,6 @@ def attach_image_loopback(image: Optional[BinaryIO], table: Optional[PartitionTa
         yield None
         return
 
-    assert table
-
     with get_loopdev(image) as loopdev, flock(loopdev):
         # losetup --partscan instructs the kernel to scan the partition table and add separate partition
         # devices for each of the partitions it finds. However, this operation is asynchronous which
@@ -986,8 +984,9 @@ def attach_image_loopback(image: Optional[BinaryIO], table: Optional[PartitionTa
         # in a race condition where we try to access a partition device before it's been initialized by
         # the kernel. To avoid this race condition, let's explicitly try to add all the partitions
         # ourselves using the BLKPKG BLKPG_ADD_PARTITION ioctl().
-        for p in table.partitions.values():
-            blkpg_add_partition(loopdev.fileno(), p.number, table.partition_offset(p), table.partition_size(p))
+        if table:
+            for p in table.partitions.values():
+                blkpg_add_partition(loopdev.fileno(), p.number, table.partition_offset(p), table.partition_size(p))
 
         try:
             yield Path(loopdev.name)
@@ -995,12 +994,13 @@ def attach_image_loopback(image: Optional[BinaryIO], table: Optional[PartitionTa
             # Similarly to above, partition devices are removed asynchronously by the kernel, so again
             # let's avoid race conditions by explicitly removing all partition devices before detaching
             # the loop device using the BLKPG BLKPG_DEL_PARTITION ioctl().
-            for p in table.partitions.values():
-                blkpg_del_partition(loopdev.fileno(), p.number)
+            if table:
+                for p in table.partitions.values():
+                    blkpg_del_partition(loopdev.fileno(), p.number)
 
 
 @contextlib.contextmanager
-def attach_base_image(base_image: Optional[Path], table: Optional[PartitionTable]) -> Iterator[Optional[Path]]:
+def attach_base_image(base_image: Optional[Path], base_root_mount_path: Path) -> Iterator[Optional[Path]]:
     """Context manager that attaches/detaches the base image directory or device"""
 
     if base_image is None:
@@ -1012,9 +1012,10 @@ def attach_base_image(base_image: Optional[Path], table: Optional[PartitionTable
             yield base_image
         else:
             with base_image.open('rb') as f, \
-                 attach_image_loopback(f, table) as loopdev:
+                 attach_image_loopback(f, None) as loopdev, \
+                 mount(loopdev, base_root_mount_path, read_only=True) as mounted_root:
 
-                yield loopdev
+                yield base_root_mount_path
 
 
 def prepare_swap(state: MkosiState, loopdev: Optional[Path], cached: bool) -> None:
@@ -2135,9 +2136,6 @@ def install_mariner(state: MkosiState) -> None:
 
     setup_dnf(state, repos)
 
-    MkosiPrinter.info("Setting up RPM database...")
-    subprocess.run(["rpm", "--root", state.root, "--initdb"])
-
     packages = {*state.config.packages}
 
     add_packages(state.config,
@@ -2148,7 +2146,7 @@ def install_mariner(state: MkosiState) -> None:
                  "dbus")            # Required for systemd
 
     if not state.do_run_build_script and state.config.bootable:
-        add_packages(state.config, packages, "kernel", "initramfs")
+        add_packages(state.config, packages, "kernel", "dracut")
 
         # If using device mapper, we need dracut to be able to find udev dm rules and dm tools
         if state.config.encrypt or state.config.verity:
@@ -2159,11 +2157,12 @@ def install_mariner(state: MkosiState) -> None:
 
     install_packages_dnf(state, packages)
 
-    kernel_d_dir = state.root / "etc/kernel/install.d"
-    os.makedirs(kernel_d_dir, exist_ok=True)
+    if state.config.base_image is None:
+        kernel_d_dir = state.root / "etc/kernel/install.d"
+        os.makedirs(kernel_d_dir, exist_ok=True)
 
-    write_resource(kernel_d_dir / "50-mkosi-reconfigure-dracut.install",
-                   "mkosi.resources", "mariner-reconfigure-dracut.install", executable=True)
+        write_resource(kernel_d_dir / "50-mkosi-reconfigure-dracut.install",
+                    "mkosi.resources", "mariner-reconfigure-dracut.install", executable=True)
 
 
 def parse_fedora_release(release: str) -> Tuple[str, str]:
@@ -3076,8 +3075,7 @@ def remove_packages(state: MkosiState) -> None:
 
     remove: Callable[[List[str]], Any]
 
-    if (state.config.distribution.package_type == PackageType.rpm and
-        state.config.distribution != Distribution.mariner):
+    if state.config.distribution.package_type == PackageType.rpm:
         remove = lambda p: invoke_dnf(state, 'remove', p)
     elif state.config.distribution.package_type == PackageType.deb:
         remove = lambda p: invoke_apt(state, "get", "purge", ["--assume-yes", "--auto-remove", *p])
@@ -7322,9 +7320,12 @@ def build_image(
     else:
         raw = create_image(state)
 
-    with attach_base_image(state.config.base_image, state.partition_table) as base_image, \
+    with attach_base_image(state.config.base_image, state.workspace / "base-root") as base_image, \
          attach_image_loopback(raw, state.partition_table) as loopdev, \
          set_umask(0o022):
+
+        if base_image:
+            assert base_image.is_dir()
 
         prepare_swap(state, loopdev, cached)
         prepare_esp(state, loopdev, cached)
