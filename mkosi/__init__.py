@@ -1467,7 +1467,15 @@ def mount(
         run(cmd)
         yield where
     finally:
-        run(["umount", "--no-mtab", "--recursive", where])
+        try_count = 0
+        while True:
+            should_check = (try_count == 4)
+            umount_result = run(["umount", "--no-mtab", "--recursive", where], check=should_check)
+            if umount_result.returncode == 0:
+                break
+
+            print(f"WARNING: failed to unmount {where}; waiting and retrying...")
+            time.sleep(1)
 
 
 def mount_loop(config: MkosiConfig, dev: Path, where: Path, read_only: bool = False) -> ContextManager[Path]:
