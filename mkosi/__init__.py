@@ -1638,7 +1638,7 @@ def mount_api_vfs(root: Path) -> Iterator[None]:
 
 @contextlib.contextmanager
 def mount_cache(state: MkosiState) -> Iterator[None]:
-    if state.config.distribution in (Distribution.fedora, Distribution.mageia, Distribution.openmandriva):
+    if state.config.distribution in (Distribution.fedora, Distribution.mageia, Distribution.openmandriva, Distribution.mariner):
         cache_paths = ["var/cache/dnf"]
     elif is_centos_variant(state.config.distribution):
         # We mount both the YUM and the DNF cache in this case, as YUM might
@@ -2007,6 +2007,11 @@ def invoke_dnf(state: MkosiState, command: str, packages: Iterable[str]) -> None
     with mount_api_vfs(state.root):
         run(cmdline, env=dict(KERNEL_INSTALL_BYPASS="1"))
 
+        if state.config.distribution == Distribution.mariner:
+            # TODO: find a cleaner way to do this
+            subprocess.run(["pkill", "-f", "gpg-agent"], check=False)
+
+
     distribution, _ = detect_distribution()
     if distribution not in (Distribution.debian, Distribution.ubuntu):
         return
@@ -2049,6 +2054,7 @@ class Repo(NamedTuple):
     url: str
     gpgpath: Path
     gpgurl: Optional[str] = None
+    enabled: bool = True
 
 
 def setup_dnf(state: MkosiState, repos: Sequence[Repo] = ()) -> None:
@@ -2074,7 +2080,7 @@ def setup_dnf(state: MkosiState, repos: Sequence[Repo] = ()) -> None:
                     name={repo.id}
                     {repo.url}
                     gpgkey={gpgkey or ''}
-                    enabled=1
+                    enabled={1 if repo.enabled else 0}
                     """
                 )
             )
@@ -2098,6 +2104,50 @@ def setup_dnf(state: MkosiState, repos: Sequence[Repo] = ()) -> None:
             """
         )
     )
+
+
+@complete_step("Installing Mariner…")
+def install_mariner(state: MkosiState) -> None:
+    base_url = "baseurl=https://packages.microsoft.com/cbl-mariner/$releasever/prod/base/$basearch"
+    microsoft_url = "baseurl=https://packages.microsoft.com/cbl-mariner/$releasever/prod/Microsoft/$basearch"
+    extras_url = "baseurl=https://packages.microsoft.com/cbl-mariner/$releasever/prod/extras/$basearch"
+    debuginfo_url = "baseurl=https://packages.microsoft.com/cbl-mariner/$releasever/prod/base/debuginfo/$basearch"
+    gpgpath = Path("/etc/pki/rpm-gpg/MICROSOFT-RPM-GPG-KEY")
+
+    repos = [Repo("mariner-official-base", base_url, gpgpath),
+             Repo("mariner-official-microsoft", microsoft_url, gpgpath),
+             Repo("mariner-official-extras", extras_url, gpgpath),
+             Repo("mariner-official-base-debuginfo", debuginfo_url, gpgpath, enabled=False)]
+
+    setup_dnf(state, repos)
+
+    packages = {*state.config.packages}
+
+    add_packages(state.config,
+                 packages,
+                 "mariner-release", # Brings os-release et al.
+                 "filesystem",      # Brings base filesystem structures
+                 "shadow-utils",    # Brings /etc/shadow
+                 "dbus")            # Required for systemd
+
+    if not state.do_run_build_script and state.config.bootable:
+        add_packages(state.config, packages, "kernel", "dracut")
+
+        # If using device mapper, we need dracut to be able to find udev dm rules and dm tools
+        if state.config.encrypt or state.config.verity:
+            add_packages(state.config, packages, "lvm2")
+
+    if state.do_run_build_script:
+        packages.update(state.config.build_packages)
+
+    install_packages_dnf(state, packages)
+
+    if state.config.base_image is None:
+        kernel_d_dir = state.root / "etc/kernel/install.d"
+        os.makedirs(kernel_d_dir, exist_ok=True)
+
+        write_resource(kernel_d_dir / "50-mkosi-reconfigure-dracut.install",
+                    "mkosi.resources", "mariner-reconfigure-dracut.install", executable=True)
 
 
 def parse_fedora_release(release: str) -> Tuple[str, str]:
@@ -2988,6 +3038,7 @@ def install_distribution(state: MkosiState, cached: bool) -> None:
             Distribution.ubuntu: install_ubuntu,
             Distribution.arch: install_arch,
             Distribution.opensuse: install_opensuse,
+            Distribution.mariner: install_mariner,
             Distribution.openmandriva: install_openmandriva,
             Distribution.gentoo: install_gentoo,
         }[state.config.distribution]
@@ -3009,7 +3060,7 @@ def remove_packages(state: MkosiState) -> None:
 
     remove: Callable[[List[str]], Any]
 
-    if (state.config.distribution.package_type == PackageType.rpm):
+    if state.config.distribution.package_type == PackageType.rpm:
         remove = lambda p: invoke_dnf(state, 'remove', p)
     elif state.config.distribution.package_type == PackageType.deb:
         remove = lambda p: invoke_apt(state, "get", "purge", ["--assume-yes", "--auto-remove", *p])
@@ -3941,7 +3992,7 @@ def gen_kernel_images(state: MkosiState) -> Iterator[Tuple[str, Path]]:
             _, kimg_path = ARCHITECTURES[state.config.architecture]
 
             kimg = Path(f"usr/src/linux-{kver.name}") / kimg_path
-        elif state.config.distribution in (Distribution.debian, Distribution.ubuntu):
+        elif state.config.distribution in (Distribution.debian, Distribution.ubuntu, Distribution.mariner):
             kimg = Path(f"boot/vmlinuz-{kver.name}")
         else:
             kimg = Path("lib/modules") / kver.name / "vmlinuz"
@@ -3952,8 +4003,12 @@ def gen_kernel_images(state: MkosiState) -> Iterator[Tuple[str, Path]]:
 def initrd_path(state: MkosiState, kver: str) -> Path:
     # initrd file is versioned in Debian Bookworm
     initrd = state.root / boot_directory(state, kver) / f"initrd.img-{kver}"
+
     if not initrd.exists():
         initrd = state.root / boot_directory(state, kver) / "initrd"
+
+    if not initrd.exists():
+        initrd = state.root / "boot" / f"initrd.img-{kver}"
 
     return initrd
 
@@ -6466,6 +6521,8 @@ def load_args(args: argparse.Namespace) -> MkosiConfig:
             args.release = "jammy"
         elif args.distribution == Distribution.opensuse:
             args.release = "tumbleweed"
+        elif args.distribution == Distribution.mariner:
+            args.release = "2.0"
         elif args.distribution == Distribution.openmandriva:
             args.release = "cooker"
         elif args.distribution == Distribution.gentoo:
