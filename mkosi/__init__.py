@@ -2492,6 +2492,8 @@ def load_args(args: argparse.Namespace) -> MkosiConfig:
             args.release = "cooker"
         elif args.distribution == Distribution.gentoo:
             args.release = "17.1"
+        elif args.distribution == Distribution.mariner:
+            args.release = "2.0"
         else:
             args.release = "rolling"
 
@@ -2531,6 +2533,8 @@ def load_args(args: argparse.Namespace) -> MkosiConfig:
         elif args.distribution == Distribution.rocky:
             args.mirror = None
         elif args.distribution == Distribution.alma:
+            args.mirror = None
+        elif args.distribution == Distribution.mariner:
             args.mirror = None
 
     if args.sign:

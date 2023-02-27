@@ -106,6 +106,7 @@ class Distribution(enum.Enum):
     rocky        = "rocky", PackageType.rpm
     alma         = "alma", PackageType.rpm
     gentoo       = "gentoo", PackageType.ebuild
+    mariner      = "mariner", PackageType.rpm
 
     def __new__(cls, name: str, package_type: PackageType) -> "Distribution":
         # This turns the list above into enum entries with .package_type attributes.
@@ -190,6 +191,7 @@ def is_dnf_distribution(d: Distribution) -> bool:
         Distribution.openmandriva,
         Distribution.rocky,
         Distribution.alma,
+        Distribution.mariner,
     )
 
 

@@ -1,0 +1,23 @@
+#!/bin/sh
+
+set -e
+
+COMMAND="${1:?}"
+
+# NB: Explicitly specifying these avoids mkinitrd from assuming hostonly mode.
+kernel=
+target=
+for kernel_version in $(ls /var/lib/initramfs/kernel); do
+    # Take this directory as the source of truth
+    kernel="$kernel_version"
+    target="/boot/initrd.img-$kernel_version"
+done
+
+case "$COMMAND" in
+    add)
+        mkinitrd -q ${target} ${kernel}
+        ;;
+    *)
+        exit 0
+        ;;
+esac

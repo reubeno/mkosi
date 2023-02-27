@@ -307,7 +307,7 @@ Takes one of the following arguments: \f[C]fedora\f[R],
 \f[C]debian\f[R], \f[C]ubuntu\f[R], \f[C]arch\f[R], \f[C]opensuse\f[R],
 \f[C]mageia\f[R], \f[C]centos\f[R], \f[C]centos_epel\f[R],
 \f[C]openmandriva\f[R], \f[C]rocky\f[R], \f[C]rocky_epel\f[R],
-\f[C]alma\f[R], \f[C]alma_epel\f[R].
+\f[C]alma\f[R], \f[C]alma_epel\f[R], \f[C]mariner\f[R].
 If not specified, defaults to the distribution of the host.
 .TP
 \f[B]\f[CB]Release=\f[B]\f[R], \f[B]\f[CB]--release=\f[B]\f[R], \f[B]\f[CB]-r\f[B]\f[R]
@@ -353,7 +353,8 @@ For Arch Linux, additional repositories must be passed in the form
 \f[B]\f[CB]UseHostRepositories=\f[B]\f[R], \f[B]\f[CB]--use-host-repositories\f[B]\f[R]
 This option is only applicable for RPM-based distributions:
 \f[I]CentOS\f[R], \f[I]Fedora Linux\f[R], \f[I]Mageia\f[R], \f[I]Rocky
-Linux\f[R], \f[I]Alma Linux\f[R] and \f[I]OpenMandriva\f[R].
+Linux\f[R], \f[I]Alma Linux\f[R], \f[I]OpenMandriva\f[R], and
+\f[I]Mariner Linux\f[R].
 Allows use of the host\[cq]s existing RPM repositories.
 By default, a hardcoded set of default RPM repositories is generated and
 used.
@@ -1318,6 +1319,8 @@ operating systems:
 \f[I]Alma Linux\f[R]
 .IP \[bu] 2
 \f[I]Gentoo\f[R]
+.IP \[bu] 2
+\f[I]Mariner Linux\f[R]
 .PP
 In theory, any distribution may be used on the host for building images
 containing any other distribution, as long as the necessary tools are
@@ -1333,7 +1336,7 @@ Any distribution that packages \f[C]zypper\f[R] may be used to build
 \f[I]openSUSE\f[R] images.
 Any distribution that packages \f[C]yum\f[R] (or the newer replacement
 \f[C]dnf\f[R]) may be used to build \f[I]CentOS\f[R], \f[I]Rocky
-Linux\f[R], or \f[I]Alma Linux\f[R] images.
+Linux\f[R], \f[I]Alma Linux\f[R], or \f[I]Mariner Linux\f[R] images.
 Any distribution that packages \f[C]emerge\f[R] may be used to build
 \f[I]Gentoo\f[R] images.
 .PP
