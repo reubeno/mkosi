@@ -1,0 +1,22 @@
+{
+    "name": "mkosi-devcontainer",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "features": {
+        "ghcr.io/devcontainers/features/common-utils:1": {
+            "installZsh": "true",
+            "upgradePackages": "true"
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python"
+            ]
+        }
+    },
+    "postStartCommand": "sudo python3 -m pip install -e ${containerWorkspaceFolder}",
+    "privileged": false,
+    "capAdd": ["SYS_ADMIN"]
+}

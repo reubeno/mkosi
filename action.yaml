@@ -23,72 +23,12 @@ runs:
 
   - name: Dependencies
     shell: bash
-    run: |
-      # For archlinux-keyring and pacman
-      sudo add-apt-repository ppa:michel-slm/kernel-utils
-      sudo apt-get update
-      sudo apt-get install --assume-yes --no-install-recommends \
-        archlinux-keyring \
-        btrfs-progs \
-        bubblewrap \
-        debian-archive-keyring \
-        dnf \
-        e2fsprogs \
-        erofs-utils \
-        makepkg \
-        mtools \
-        ovmf \
-        pacman-package-manager \
-        pandoc \
-        python3-pefile \
-        python3-pyelftools \
-        qemu-system-x86 \
-        squashfs-tools \
-        swtpm \
-        systemd-container \
-        xfsprogs
-
-      sudo pacman-key --init
-      sudo pacman-key --populate archlinux
+    run: ${{ github.action_path }}/tools/install-dependencies.sh
 
   - name: Update systemd
     shell: bash
     working-directory: ${{ github.action_path }}
-    run: |
-      echo "deb-src http://archive.ubuntu.com/ubuntu/ $(lsb_release -cs) main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-      sudo apt-get update
-      sudo apt-get build-dep systemd
-      sudo apt-get install --assume-yes --no-install-recommends libfdisk-dev libtss2-dev
-
-      git clone https://github.com/systemd/systemd --depth=1
-      meson setup systemd/build systemd \
-        -D repart=true \
-        -D efi=true \
-        -D bootloader=true \
-        -D ukify=true \
-        -D firstboot=true \
-        -D blkid=true \
-        -D openssl=true \
-        -D tpm2=true
-
-      BINARIES=(
-        bootctl
-        systemctl
-        systemd-analyze
-        systemd-dissect
-        systemd-firstboot
-        systemd-measure
-        systemd-nspawn
-        systemd-repart
-        ukify
-      )
-
-      ninja -C systemd/build ${BINARIES[@]}
-
-      for BINARY in "${BINARIES[@]}"; do
-        sudo ln -svf $PWD/systemd/build/$BINARY /usr/bin/$BINARY
-        $BINARY --version
-      done
+    run: ${{ github.action_path }}/tools/update-systemd.sh
 
   - name: Install
     shell: bash
