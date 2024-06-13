@@ -91,6 +91,7 @@ class Distribution(StrEnum):
     openmandriva = enum.auto()
     rocky        = enum.auto()
     alma         = enum.auto()
+    azurelinux   = enum.auto()
     custom       = enum.auto()
 
     def is_centos_variant(self) -> bool:
@@ -164,6 +165,10 @@ def detect_distribution() -> tuple[Optional[Distribution], Optional[str]]:
     version_id = os_release.get("VERSION_ID", None)
     version_codename = os_release.get("VERSION_CODENAME", None)
     extracted_codename = None
+
+    # Azure Linux 2.0 reported itself as 'mariner' in /usr/lib/os-release
+    if dist_id == "mariner":
+        dist_id = "azurelinux"
 
     if version:
         # extract Debian release codename

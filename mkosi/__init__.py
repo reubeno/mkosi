@@ -1172,13 +1172,13 @@ def install_systemd_boot(context: Context) -> None:
                     )
 
 
-def find_and_install_shim_binary(
+def try_find_and_install_shim_binary(
     context: Context,
     name: str,
     signed: Sequence[str],
     unsigned: Sequence[str],
     output: Path,
-) -> None:
+) -> bool:
     if context.config.shim_bootloader == ShimBootloader.signed:
         for pattern in signed:
             for p in context.root.glob(pattern):
@@ -1192,10 +1192,12 @@ def find_and_install_shim_binary(
 
                 log_step(f"Installing signed {name} EFI binary from /{rel} to /{output}")
                 shutil.copy2(p, context.root / output)
-                return
+                return True
 
         if context.config.bootable == ConfigFeature.enabled:
-            die(f"Couldn't find signed {name} EFI binary installed in the image")
+            logging.warning(f"Couldn't find signed {name} EFI binary installed in the image")
+
+        return False
     else:
         for pattern in unsigned:
             for p in context.root.glob(pattern):
@@ -1214,11 +1216,12 @@ def find_and_install_shim_binary(
                     log_step(f"Installing unsigned {name} EFI binary /{rel} to /{output}")
                     shutil.copy2(p, context.root / output)
 
-                return
+                return True
 
         if context.config.bootable == ConfigFeature.enabled:
-            die(f"Couldn't find unsigned {name} EFI binary installed in the image")
+            logging.warning(f"Couldn't find unsigned {name} EFI binary installed in the image")
 
+        return False
 
 def install_shim(context: Context) -> None:
     if not want_efi(context.config):
@@ -1247,9 +1250,11 @@ def install_shim(context: Context) -> None:
         f"usr/lib/shim/shim{arch}.efi", # Debian/Ubuntu
         f"usr/share/shim/*/*/shim{arch}.efi", # Fedora/CentOS
         f"usr/share/shim/shim{arch}.efi", # Arch
+        f"usr/share/shim-unsigned-{arch}/shim{arch}.efi", # Azure Linux
     ]
 
-    find_and_install_shim_binary(context, "shim", signed, unsigned, dst)
+    if not try_find_and_install_shim_binary(context, "shim", signed, unsigned, dst):
+        die("Couldn't find shim EFI binary installed in the image")
 
     signed = [
         f"usr/lib/shim/mm{arch}.efi.signed", # Debian
@@ -1264,7 +1269,10 @@ def install_shim(context: Context) -> None:
         f"usr/share/shim/mm{arch}.efi", # Arch
     ]
 
-    find_and_install_shim_binary(context, "mok", signed, unsigned, dst.parent)
+    if not try_find_and_install_shim_binary(context, "mok", signed, unsigned, dst.parent):
+        # N.B. There are versions of Azure Linux that don't have mok present.
+        if context.config.distribution != Distribution.azurelinux:
+            die("Couldn't find mok EFI binary installed in the image")
 
 
 def find_grub_directory(context: Context, *, target: str) -> Optional[Path]:

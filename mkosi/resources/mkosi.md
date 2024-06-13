@@ -443,6 +443,7 @@ boolean argument: either `1`, `yes`, or `true` to enable, or `0`, `no`,
     | `rhel-ubi`     | https://cdn-ubi.redhat.com        |                                |
     | `mageia`       | https://www.mageia.org            |                                |
     | `openmandriva` | http://mirrors.openmandriva.org   |                                |
+    | `azurelinux`   | https://packages.microsoft.com    | https://packages.microsoft.com |
 
 `LocalMirror=`, `--local-mirror=`
 :   The mirror will be used as a local, plain and direct mirror instead
@@ -1878,6 +1879,8 @@ distributions:
 * *Rocky Linux*
 
 * *Alma Linux*
+
+* *Azure Linux*
 
 * *None* (**Requires the user to provide a pre-built rootfs**)
 

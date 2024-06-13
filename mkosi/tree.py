@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from mkosi.config import ConfigFeature
+from mkosi.distributions import Distribution, detect_distribution
 from mkosi.log import ARG_DEBUG, die
 from mkosi.run import run
 from mkosi.sandbox import Mount, SandboxProtocol, nosandbox
@@ -89,11 +90,21 @@ def copy_tree(
     use_subvolumes: ConfigFeature = ConfigFeature.disabled,
     sandbox: SandboxProtocol = nosandbox,
 ) -> Path:
+    preserved_features: list[str] = [
+        "mode",
+        "links",
+    ]
+
+    if preserve:
+        preserved_features.extend(["timestamps", "ownership"])
+        if detect_distribution()[0] != Distribution.azurelinux:
+            preserved_features.append("xattr")
+
     copy: list[PathString] = [
         "cp",
         "--recursive",
         "--dereference" if dereference else "--no-dereference",
-        f"--preserve=mode,links{',timestamps,ownership,xattr' if preserve else ''}",
+        f"--preserve={','.join(preserved_features)}",
         "--reflink=auto",
         "--copy-contents",
         src, dst,

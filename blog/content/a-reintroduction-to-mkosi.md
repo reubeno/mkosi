@@ -50,6 +50,7 @@ Images can be built for any of the following distributions:
 - RHEL
 - Rocky Linux
 - Alma Linux
+- Azure Linux
 
 And the following output formats are supported:
 
